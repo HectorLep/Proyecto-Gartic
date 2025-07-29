@@ -1,0 +1,11 @@
+# Gartic Phone Bot - Dependencias
+PyQt6>=6.4.0
+pyautogui>=0.9.54
+Pillow>=9.0.0
+numpy>=1.21.0
+opencv-python>=4.5.0
+scikit-learn>=1.0.0
+pynput>=1.7.6
+
+# Opcional para mejor rendimiento
+numba>=0.56.4
