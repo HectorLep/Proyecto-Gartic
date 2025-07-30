@@ -10,41 +10,211 @@ from sklearn.cluster import KMeans
 import colorsys
 
 class DrawingBot:
-    def __init__(self, image_path, canvas_region):
+    def __init__(self, image_path, canvas_region, mode='palette', exact_color_coords=None, brush_coords=None):
         self.image_path = image_path
         self.canvas_region = canvas_region
+        self.mode = mode
+        self.exact_color_coords = exact_color_coords
+        self.brush_coords = brush_coords
         self.pause_event = threading.Event()
         self.cancel_event = threading.Event()
-        
+        # --- AÑADE ESTE BLOQUE DE LÓGICA AQUÍ ---
+        # Asignar un paso de dibujo por defecto según el modo
+        if self.mode == 'exact':
+            # El modo preciso usa el paso más pequeño para máximo detalle
+            self.brush_step = 2
+            print("🖌️ Modo Preciso seleccionado. Usando paso de dibujo fino (2px).")
+        elif self.mode == 'palette':
+            # El modo paleta usa un paso medio para balancear velocidad y calidad
+            self.brush_step = 11
+            print("🖌️ Modo Paleta seleccionado. Usando paso de dibujo medio (11px).")
+        # Nota: El modo 'smart' define su propio brush_step dinámicamente, por lo que no necesita un valor aquí.
+        # --- FIN DEL BLOQUE A AÑADIR ---
         # Cargar paleta de colores
         self.load_palette()
         
+
         # Configuración de pyautogui
         pyautogui.FAILSAFE = True
         pyautogui.PAUSE = 0
-        
-        # Colores disponibles en RGB para el mapeo inteligente
+                
+        # --- POR ESTE NUEVO DICCIONARIO ---
         self.available_colors = {
-            '0,0,0': (0, 0, 0),           # Negro
-            '89,89,89': (89, 89, 89),     # Gris oscuro
-            '0,85,255': (0, 85, 255),     # Azul
-            '255,255,255': (255, 255, 255), # Blanco
-            '193,193,193': (193, 193, 193), # Gris claro
-            '0,171,255': (0, 171, 255),   # Azul claro
-            '0,128,0': (0, 128, 0),       # Verde oscuro
-            '128,0,0': (128, 0, 0),       # Rojo oscuro
-            '101,67,33': (101, 67, 33),   # Marrón oscuro
-            '0,204,0': (0, 204, 0),       # Verde claro
-            '239,19,11': (239, 19, 11),   # Rojo
-            '255,113,0': (255, 113, 0),   # Naranja
-            '210,129,63': (210, 129, 63), # Marrón medio
-            '145,0,255': (145, 0, 255),   # Morado
-            '255,175,175': (255, 175, 175), # Rosa claro
-            '255,228,0': (255, 228, 0),   # Amarillo
-            '255,0,255': (255, 0, 255),   # Rosa brillante
-            '255,192,203': (255, 192, 203)  # Rosa pálido
+            '0,0,0': (0, 0, 0),                           # Negro
+            '102,102,102': (102, 102, 102),               # Gris medio oscuro
+            '0,80,205': (0, 80, 205),                     # Azul intenso
+            '255,255,255': (255, 255, 255),               # Blanco
+            '170,170,170': (170, 170, 170),               # Gris claro
+            '38,201,255': (38, 201, 255),                 # Cian brillante
+            '1,116,32': (1, 116, 32),                     # Verde oscuro
+            '153,0,0': (153, 0, 0),                       # Rojo oscuro
+            '150,65,18': (150, 65, 18),                   # Marrón rojizo
+            '17,176,60': (17, 176, 60),                   # Verde brillante
+            '255,0,19': (255, 0, 19),                     # Rojo brillante
+            '255,120,41': (255, 120, 41),                 # Naranja fuerte
+            '176,112,28': (176, 112, 28),                 # Marrón mostaza
+            '153,0,78': (153, 0, 78),                     # Fucsia oscuro
+            '203,90,87': (203, 90, 87),                   # Rojo salmón oscuro
+            '255,193,38': (255, 193, 38),                 # Amarillo dorado
+            '255,0,143': (255, 0, 143),                   # Rosa fuerte / Fucsia neón
+            '254,175,168': (254, 175, 168)                # Rosa claro / Salmón claro
         }
-    
+                
+    # AÑADE ESTA FUNCIÓN NUEVA
+    def _choose_best_brush(self, layer):
+        """Analiza una capa y elige el mejor pincel y paso de dibujo."""
+        # Contamos los píxeles totales para tener una idea general
+        total_pixels = np.sum(layer > 0)
+
+        # Si son muy pocos píxeles, es un detalle pequeño, usamos el pincel más fino
+        if total_pixels < 50:
+            return "brush_5", 2 # Pincel 3px, paso 2
+
+        # Analizamos el "grosor" promedio de las líneas en la capa
+        line_thicknesses = []
+        for row in layer:
+            # Encontrar segmentos de píxeles en la fila
+            segments = np.where(row > 0)[0]
+            if len(segments) > 0:
+                # Calcular la longitud de los segmentos contiguos
+                jumps = np.diff(segments) > 1
+                runs = np.split(segments, np.where(jumps)[0] + 1)
+                for run in runs:
+                    line_thicknesses.append(len(run))
+
+        if not line_thicknesses:
+            return "brush_5", 2 # Si no hay líneas, es detalle, pincel pequeño
+
+        avg_thickness = np.mean(line_thicknesses)
+
+        # Decidimos el pincel basado en el grosor promedio
+        if avg_thickness > 18:
+            return "brush_1", 18 # Pincel 23px, paso 18
+        elif avg_thickness > 12:
+            return "brush_2", 14 # Pincel 18px, paso 14
+        elif avg_thickness > 8:
+            return "brush_3", 11 # Pincel 14px, paso 11
+        elif avg_thickness > 4:
+            return "brush_4", 7  # Pincel 9px, paso 7
+        else:
+            return "brush_5", 2  # Pincel 3px, paso 2
+
+    # REEMPLAZA TU FUNCIÓN draw_by_smart_mode ENTERA CON ESTA
+    def draw_by_smart_mode(self, progress_callback=None):
+        """Dibuja usando un pincel adecuado para cada capa de color."""
+        try:
+            progress_callback("Iniciando dibujo en MODO INTELIGENTE...")
+            time.sleep(3)
+            # Procesar imagen (igual que antes)
+            if self.image_path.lower().endswith('.png'):
+                pil_image = self._process_png_with_transparency(self.image_path)
+            else:
+                pil_image = Image.open(self.image_path).convert('RGB')
+            pil_image = self._enhance_image_quality(pil_image)
+            canvas_w, canvas_h = self.canvas_region[2], self.canvas_region[3]
+            pil_image.thumbnail((canvas_w, canvas_h), Image.Resampling.LANCZOS)
+            image_array = np.array(pil_image)
+            height, width = image_array.shape[:2]
+
+            drawn_mask = np.zeros((height, width), dtype=np.uint8)
+
+            progress_callback("Analizando colores...")
+            exact_colors = self._extract_dominant_colors(image_array, num_colors=50, map_to_palette=False)
+            if not exact_colors: raise Exception("No se pudieron detectar colores.")
+
+            total_colors = len(exact_colors)
+            for i, color in enumerate(exact_colors):
+                if self._check_controls() == "cancel": break
+                if color[0] > 240 and color[1] > 240 and color[2] > 240: continue
+
+                # Crear la capa de color
+                layer = np.zeros((height, width), dtype=np.uint8)
+                for y in range(height):
+                    for x in range(width):
+                        pixel_color = tuple(image_array[y, x])
+                        distance = self._color_distance(pixel_color, color)
+                        if distance < 25:
+                            layer[y, x] = 255
+
+                # Quitar píxeles ya dibujados
+                layer[drawn_mask == 255] = 0
+
+                if np.any(layer):
+                    # --- EL CAMBIO CLAVE ---
+                    # 1. El bot elige el mejor pincel y paso para esta capa específica
+                    brush_key, self.brush_step = self._choose_best_brush(layer)
+
+                    progress_callback(f"Color {i+1}/{total_colors}: Usando pincel {brush_key} ({self.brush_step}px step)")
+
+                    # 2. Selecciona el color y el pincel elegido
+                    if not self._select_exact_color(tuple(map(int, color))): continue
+
+                    # 3. Dibuja la capa con el paso optimizado
+                    self._draw_layer_optimized(layer, "exact_mode")
+
+                    # 4. Actualiza la máscara de memoria
+                    drawn_mask[layer > 0] = 255
+
+            progress_callback("¡Dibujo inteligente completado!")
+        except Exception as e:
+            progress_callback(f"Error en modo inteligente: {str(e)}")
+            
+    # AÑADE ESTA NUEVA FUNCIÓN
+    def _select_brush(self, brush_key):
+        """Selecciona un pincel haciendo clic en su coordenada calibrada."""
+        if not self.brush_coords or brush_key not in self.brush_coords:
+            print(f"⚠️ Coordenadas para '{brush_key}' no calibradas. Usando pincel actual.")
+            return False
+
+        try:
+            coord = self.brush_coords[brush_key]
+            pyautogui.click(coord)
+            time.sleep(0.1)
+            return True
+        except Exception as e:
+            print(f"Error seleccionando el pincel {brush_key}: {e}")
+            return False
+
+    # AÑADE ESTA FUNCIÓN NUEVA
+    def _select_exact_color(self, rgb_tuple):
+        """Selecciona un color personalizado introduciendo sus valores RGB."""
+        r, g, b = rgb_tuple
+        coords = self.exact_color_coords
+
+        try:
+            # 1. Abrir el selector de color
+            pyautogui.click(coords['palette_button'])
+            time.sleep(0.1)
+
+            # 2. Introducir valor R
+            pyautogui.click(coords['r_field'])
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'a')
+            pyautogui.press('backspace')
+            pyautogui.typewrite(str(r), interval=0.01)
+
+            # 3. Introducir valor G
+            pyautogui.click(coords['g_field'])
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'a')
+            pyautogui.press('backspace')
+            pyautogui.typewrite(str(g), interval=0.01)
+
+            # 4. Introducir valor B
+            pyautogui.click(coords['b_field'])
+            time.sleep(0.05)
+            pyautogui.hotkey('ctrl', 'a')
+            pyautogui.press('backspace')
+            pyautogui.typewrite(str(b), interval=0.01)
+
+            # 5. Cerrar el selector (haciendo clic de nuevo en el botón)
+            pyautogui.click(coords['palette_button'])
+            time.sleep(0.15)
+            return True
+        except Exception as e:
+            print(f"Error seleccionando color exacto {rgb_tuple}: {e}")
+            return False
+        
     def load_palette(self):
         """Carga la paleta de colores calibrada"""
         try:
@@ -176,13 +346,13 @@ class DrawingBot:
                 closest_color = color_key
         
         return closest_color
-    
-    def _extract_dominant_colors(self, image_array, num_colors=10):
-        """Extrae los colores dominantes de la imagen usando K-means mejorado"""
+        
+    # REEMPLAZA TU FUNCIÓN _extract_dominant_colors ENTERA CON ESTA:
+    def _extract_dominant_colors(self, image_array, num_colors=10, map_to_palette=True):
         try:
-            # Si hay máscara de transparencia, usar solo píxeles visibles
+            # 1. Preparar los datos de los píxeles
             if hasattr(self, 'transparency_mask') and self.transparency_mask is not None:
-                # Filtrar solo píxeles que deben dibujarse
+                # Caso para imágenes con transparencia
                 mask_resized = cv2.resize(self.transparency_mask.astype(np.uint8), 
                                         (image_array.shape[1], image_array.shape[0]))
                 visible_pixels = image_array[mask_resized > 0]
@@ -193,57 +363,45 @@ class DrawingBot:
                 
                 data = visible_pixels.reshape((-1, 3))
             else:
-                # Usar toda la imagen
+                # Caso para imágenes sin transparencia
                 data = image_array.reshape((-1, 3))
-            
-            # Filtrar píxeles blancos puros (fondo)
+
+            # 2. Analizar colores (ESTA PARTE AHORA ESTÁ BIEN INDENTADA)
             non_white_mask = ~((data[:, 0] > 240) & (data[:, 1] > 240) & (data[:, 2] > 240))
             if np.any(non_white_mask):
                 data = data[non_white_mask]
             
-            if len(data) == 0:
-                print("⚠️ Solo píxeles blancos detectados")
-                return []
-            
-            # Aplicar K-means con más clusters para mejor detección
+            if len(data) == 0: return []
+
             actual_clusters = min(num_colors, len(np.unique(data, axis=0)))
-            if actual_clusters < 2:
-                print("⚠️ Muy pocos colores únicos detectados")
-                return []
+            if actual_clusters < 2: return []
             
             kmeans = KMeans(n_clusters=actual_clusters, random_state=42, n_init=10)
             kmeans.fit(data)
             
-            # Obtener colores centrales y sus frecuencias
             colors = kmeans.cluster_centers_.astype(int)
-            labels = kmeans.labels_
-            
-            # Calcular frecuencia de cada color
-            unique_labels, counts = np.unique(labels, return_counts=True)
+            unique_labels, counts = np.unique(kmeans.labels_, return_counts=True)
             color_freq = list(zip(colors, counts))
-            
-            # Ordenar por frecuencia (más común primero)
             color_freq.sort(key=lambda x: x[1], reverse=True)
-            
-            # Mapear a colores de paleta disponibles
+
+            # 3. Devolver el resultado según el modo
+            if not map_to_palette:
+                exact_colors = [tuple(c) for c, freq in color_freq]
+                print(f"🎨 Extraídos {len(exact_colors)} colores exactos.")
+                return exact_colors
+
             mapped_colors = []
             for color, freq in color_freq:
                 closest = self._find_closest_palette_color(tuple(color))
                 if closest and closest not in [c[0] for c in mapped_colors]:
                     mapped_colors.append((closest, tuple(color), freq))
-                    print(f"🎨 Color detectado: {self._get_color_name(closest)} (frecuencia: {freq})")
             
             return mapped_colors
-        
+
         except Exception as e:
             print(f"Error extrayendo colores dominantes: {e}")
-            # Fallback más conservador
-            return [
-                ('0,0,0', (0, 0, 0), 1000),       # Negro
-                ('239,19,11', (239, 19, 11), 800), # Rojo
-                ('0,85,255', (0, 85, 255), 600),  # Azul
-            ]
-    
+            return []
+        
     def _create_color_layers(self, image_array, color_palette):
         """Crea capas para cada color en la paleta"""
         layers = {}
@@ -301,170 +459,159 @@ class DrawingBot:
         except Exception as e:
             print(f"Error seleccionando color {color_key}: {e}")
             return False
-    
-    def _draw_layer_optimized(self, layer, color_key, progress_callback=None):
-        """Dibuja una capa con algoritmo optimizado de líneas"""
-        if not self._select_color(color_key):
-            return
         
+    # REEMPLAZA LA FUNCIÓN ENTERA
+    def _draw_layer_optimized(self, layer, color_key, progress_callback=None):
+        """Dibuja una capa con algoritmo optimizado, saltando líneas según el pincel."""
+        if color_key != "exact_mode":
+            if not self._select_color(color_key):
+                return
+
         canvas_x_start, canvas_y_start = self.canvas_region[0], self.canvas_region[1]
         height, width = layer.shape
-        
-        lines_drawn = 0
-        total_pixels = np.sum(layer == 255)
-        pixels_drawn = 0
-        
-        print(f"🖌️ Iniciando dibujo de {self._get_color_name(color_key)} ({total_pixels} píxeles)")
-        
-        # Dibujar líneas horizontales
-        for y in range(height):
+
+        # Bucle 'while' para permitir saltos de 'y'
+        y = 0
+        while y < height:
             if self._check_controls() == "cancel":
                 return
-            
+
             x = 0
             while x < width:
                 # Buscar inicio de línea
-                while x < width and layer[y, x] != 255:
-                    x += 1
-                
-                if x < width:
+                if layer[y, x] == 255:
                     start_x = x
                     # Buscar final de línea
                     while x < width and layer[y, x] == 255:
                         x += 1
                     end_x = x - 1
-                    
-                    # Dibujar línea solo si es suficientemente larga (mínimo 1 píxel)
-                    if end_x >= start_x:
-                        screen_start_x = canvas_x_start + start_x
-                        screen_start_y = canvas_y_start + y
-                        screen_end_x = canvas_x_start + end_x
-                        screen_end_y = canvas_y_start + y
-                                                
-                        # Bloque de código DEFINITIVO
 
-                        # Mover al punto de inicio
-                        pyautogui.moveTo(screen_start_x, screen_start_y, duration=0)
+                    # Dibujar la línea
+                    screen_start_x = canvas_x_start + start_x
+                    screen_start_y = canvas_y_start + y
+                    screen_end_x = canvas_x_start + end_x
 
-                        # AÑADE ESTA PAUSA: Le da tiempo al sistema para registrar la nueva posición del cursor
-                        time.sleep(0.02)
+                    pyautogui.moveTo(screen_start_x, screen_start_y, duration=0)
+                    time.sleep(0.02)
+                    pyautogui.mouseDown()
+                    if end_x > start_x:
+                        pyautogui.moveTo(screen_end_x, screen_start_y, duration=0.01)
+                    pyautogui.mouseUp()
+                    time.sleep(0.03)
+                else:
+                    x += 1
 
-                        # Presionar el botón del mouse
-                        pyautogui.mouseDown()
-
-                        # Si es una línea, mover al final.
-                        if end_x > start_x:
-                            pyautogui.moveTo(screen_end_x, screen_end_y, duration=0.01)
-
-                        # Soltar el botón del mouse
-                        pyautogui.mouseUp()
-
-                        # AUMENTA LA PAUSA FINAL: Dale un poco más de tiempo para procesar el "mouseUp"
-                        time.sleep(0.03)
-                        
-                        lines_drawn += 1
-                        pixels_drawn += (end_x - start_x + 1)
-                        
-                        # Actualizar progreso cada 20 líneas
-                        if lines_drawn % 20 == 0 and progress_callback:
-                            progress = min(pixels_drawn / max(total_pixels, 1) * 100, 100)
-                            progress_callback(f"Dibujando {self._get_color_name(color_key)}: {progress:.1f}%")
-        
-        print(f"✅ Completado {self._get_color_name(color_key)}: {lines_drawn} líneas, {pixels_drawn} píxeles")
-    
+            # ¡EL GRAN CAMBIO! Saltamos píxeles en el eje Y
+            y += self.brush_step
+                
     def draw_by_layers(self, progress_callback=None):
-        """Método principal de dibujo por capas inteligentes"""
+        """Método principal que elige el flujo de dibujo según el modo."""
+        if self.mode == 'smart': # <-- AÑADE ESTE ELIF
+            self.draw_by_smart_mode(progress_callback)
+        elif self.mode == 'exact':
+            self.draw_by_exact_colors(progress_callback)
+        else: # modo 'palette'
+            self.draw_by_palette_colors(progress_callback)
+
+    # EN drawing_bot.py, ASEGÚRATE DE TENER ESTA FUNCIÓN
+    def draw_by_palette_colors(self, progress_callback=None):
+        """Método de dibujo por paleta (tu función original renombrada)."""
+        #
+        # AQUÍ VA TODO EL CÓDIGO de tu función de dibujo original
+        # que usaba la paleta de 18 colores para crear y dibujar las capas.
+        #
         try:
-            if progress_callback:
-                progress_callback("Iniciando dibujo inteligente...")
+            progress_callback("Iniciando dibujo en MODO PALETA...")
+            time.sleep(3)
+            # ...el resto de tu código de dibujo por paleta...
             
-            print("🎨 Iniciando modo de dibujo INTELIGENTE por capas...")
-            print("⌨️  Atajos: F9 (Pausar/Reanudar), F10 (Cancelar)")
-            
-            time.sleep(3)  # Tiempo para prepararse
-            
-            # Paso 1: Procesar imagen
-            if progress_callback:
-                progress_callback("Procesando imagen...")
-            
-            # Manejar PNG con transparencia correctamente (SIN fondo gris)
+        except Exception as e:
+            error_msg = f"Error durante el dibujo por paleta: {str(e)}"
+            print(f"❌ {error_msg}")
+            progress_callback(error_msg)
+
+    # REEMPLAZA TU FUNCIÓN draw_by_exact_colors ENTERA CON ESTA:
+    def draw_by_exact_colors(self, progress_callback=None):
+        """Dibuja usando colores exactos de forma eficiente, evitando repintar."""
+        try:
+            progress_callback("Iniciando dibujo en MODO PRECISO...")
+            time.sleep(3)
+
+            # Paso 1: Procesar imagen (sin cambios)
             if self.image_path.lower().endswith('.png'):
                 pil_image = self._process_png_with_transparency(self.image_path)
             else:
                 pil_image = Image.open(self.image_path).convert('RGB')
-                self.transparency_mask = None  # No hay transparencia
-            
-            if pil_image is None:
-                raise Exception("No se pudo procesar la imagen")
-            
-            # Mejorar calidad de imagen
             pil_image = self._enhance_image_quality(pil_image)
-            
-            # Redimensionar para ajustar al canvas
             canvas_w, canvas_h = self.canvas_region[2], self.canvas_region[3]
-            original_size = pil_image.size
             pil_image.thumbnail((canvas_w, canvas_h), Image.Resampling.LANCZOS)
-            
-            print(f"📏 Imagen redimensionada de {original_size} a {pil_image.size}")
-            
-            # Convertir a array numpy
             image_array = np.array(pil_image)
-            
-            if progress_callback:
-                progress_callback("Analizando colores de la imagen...")
-            
-            # Paso 2: Extraer colores dominantes
-            dominant_colors = self._extract_dominant_colors(image_array, num_colors=12)
-            
-            if not dominant_colors:
-                raise Exception("No se pudieron detectar colores en la imagen")
-            
-            print(f"🎨 Colores detectados para dibujo: {len(dominant_colors)}")
-            
-            # Paso 3: Crear capas de colores
-            if progress_callback:
-                progress_callback("Creando capas de colores...")
-            
-            color_layers = self._create_color_layers(image_array, dominant_colors)
-            
-            if not color_layers:
-                raise Exception("No se pudieron crear capas de colores válidas")
-            
-            # Paso 4: Dibujar cada capa (ordenar por frecuencia - colores más comunes primero)
-            sorted_colors = [(k, v) for k, v in color_layers.items()]
-            total_colors = len(sorted_colors)
-            
-            for i, (color_key, layer) in enumerate(sorted_colors):
-                if self._check_controls() == "cancel":
-                    break
+            height, width = image_array.shape[:2]
+
+            # --- INICIO DE CAMBIOS IMPORTANTES ---
+
+            # NUEVO: Crear un "mapa" para recordar los píxeles ya dibujados.
+            drawn_mask = np.zeros((height, width), dtype=np.uint8)
+
+            # --- FIN DE CAMBIOS IMPORTANTES ---
+
+            # Paso 2: Extraer colores exactos (sin cambios)
+            progress_callback("Analizando paleta de colores exacta...")
+            exact_colors = self._extract_dominant_colors(image_array, num_colors=50, map_to_palette=False)
+            if not exact_colors:
+                raise Exception("No se pudieron detectar colores en la imagen.")
+
+            # Paso 3: Dibujar cada capa de color, pero solo en áreas no pintadas
+            total_colors = len(exact_colors)
+            for i, color in enumerate(exact_colors):
+                if self._check_controls() == "cancel": break
                 
-                color_name = self._get_color_name(color_key)
-                print(f"🖌️  Dibujando capa {i+1}/{total_colors}: {color_name}")
+                # El blanco puro suele ser el fondo, lo omitimos para acelerar
+                if color[0] > 240 and color[1] > 240 and color[2] > 240:
+                    continue
+
+                progress_callback(f"Procesando color {i+1}/{total_colors}: RGB{color}")
+
+                # Crear la capa de forma flexible (sin cambios)
+                layer = np.zeros((height, width), dtype=np.uint8)
+                color_threshold = 25
+                for y in range(height):
+                    for x in range(width):
+                        pixel_color = tuple(image_array[y, x])
+                        distance = self._color_distance(pixel_color, color)
+                        if distance < color_threshold:
+                            layer[y, x] = 255
                 
-                if progress_callback:
-                    progress_callback(f"Capa {i+1}/{total_colors}: {color_name}")
+                # --- INICIO DE CAMBIOS IMPORTANTES ---
+
+                # NUEVO: Antes de dibujar, eliminamos de la capa actual los píxeles
+                # que ya han sido pintados por un color anterior.
+                layer[drawn_mask == 255] = 0
+
+                # Si todavía quedan píxeles por dibujar en esta capa...
+                if np.any(layer):
+                    progress_callback(f"Dibujando color {i+1}/{total_colors}: RGB{color}")
+                    
+                    if not self._select_exact_color(color):
+                        print(f"⚠️ Omitiendo color {color} por error en la selección.")
+                        continue
+
+                    self._draw_layer_optimized(layer, color_key="exact_mode", progress_callback=progress_callback)
+
+                    # NUEVO: Actualizamos nuestro mapa de memoria, marcando las nuevas
+                    # áreas como ya dibujadas.
+                    drawn_mask[layer == 255] = 255
+
+                # --- FIN DE CAMBIOS IMPORTANTES ---
                 
-                # Dibujar la capa
-                self._draw_layer_optimized(layer, color_key, progress_callback)
-                
-                # Pequeña pausa entre capas
-                time.sleep(0.3)
-            
-            if not self.cancel_event.is_set():
-                if progress_callback:
-                    progress_callback("¡Dibujo completado exitosamente!")
-                print("✅ ¡Dibujo completado exitosamente!")
-            else:
-                if progress_callback:
-                    progress_callback("Dibujo cancelado por el usuario")
-                print("❌ Dibujo cancelado por el usuario.")
-        
+            progress_callback("¡Dibujo de alta precisión completado!")
+
         except Exception as e:
-            error_msg = f"Error durante el dibujo: {str(e)}"
+            error_msg = f"Error durante el dibujo preciso: {str(e)}"
             print(f"❌ {error_msg}")
-            if progress_callback:
-                progress_callback(error_msg)
-    
+            progress_callback(error_msg)
+
+            
     def _get_color_name(self, color_key):
         """Obtiene el nombre amigable del color"""
         color_names = {

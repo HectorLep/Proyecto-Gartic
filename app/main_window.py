@@ -1,16 +1,14 @@
-import sys
 import json
 import os
 from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QPushButton, QLabel, QFileDialog, QMessageBox, 
                              QProgressBar, QTabWidget, QScrollArea, QGridLayout,
-                             QSpinBox, QGroupBox)
+                             QSpinBox, QGroupBox, QRadioButton, QComboBox)
 from PyQt6.QtCore import QThread, pyqtSignal, QObject, Qt
 from PyQt6.QtGui import QPixmap, QFont
 from bot.drawing_bot import DrawingBot
-from pynput import keyboard, mouse # Importar mouse de pynput
+from pynput import keyboard, mouse 
 
-# El listener de teclado no cambia
 class KeyboardListener(QThread):
     pause_pressed = pyqtSignal()
     cancel_pressed = pyqtSignal()
@@ -28,7 +26,6 @@ class KeyboardListener(QThread):
         with keyboard.Listener(on_press=on_press) as listener:
             listener.join()
 
-# Listener de mouse para la calibración
 class MouseClickListener(QThread):
     mouse_clicked = pyqtSignal(int, int)
 
@@ -49,7 +46,6 @@ class MouseClickListener(QThread):
         if self.listener:
             self.listener.stop()
 
-# El worker para el dibujo no cambia
 class Worker(QObject):
     finished = pyqtSignal()
     progress = pyqtSignal(str)
@@ -66,7 +62,6 @@ class Worker(QObject):
             self.progress.emit(f"Error: {str(e)}")
             self.finished.emit()
 
-# Clase de calibración de color completamente reescrita
 class ColorCalibrationWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -75,16 +70,28 @@ class ColorCalibrationWidget(QWidget):
         self.current_color_index = 0
         self.is_calibrating = False
         self.mouse_listener = None
-        
+                
         self.colors = [
-            ("Negro", "0,0,0"), ("Blanco", "255,255,255"), ("Gris claro", "193,193,193"),
-            ("Gris oscuro", "89,89,89"), ("Rojo", "239,19,11"), ("Naranja", "255,113,0"),
-            ("Amarillo", "255,228,0"), ("Verde claro", "0,204,0"), ("Azul claro", "0,171,255"),
-            ("Azul", "0,85,255"), ("Morado", "145,0,255"), ("Rosa brillante", "255,0,255"),
-            ("Marrón medio", "210,129,63"), ("Rosa claro", "255,175,175")
-            # Añade más si es necesario
+            ("Negro", "0,0,0"),
+            ("Gris medio oscuro", "102,102,102"),
+            ("Azul intenso", "0,80,205"),
+            ("Blanco", "255,255,255"),
+            ("Gris claro", "170,170,170"),
+            ("Cian brillante", "38,201,255"),
+            ("Verde oscuro", "1,116,32"),
+            ("Rojo oscuro", "153,0,0"),
+            ("Marrón rojizo", "150,65,18"),
+            ("Verde brillante", "17,176,60"),
+            ("Rojo brillante", "255,0,19"),
+            ("Naranja fuerte", "255,120,41"),
+            ("Marrón mostaza", "176,112,28"),
+            ("Fucsia oscuro", "153,0,78"),
+            ("Rojo salmón oscuro", "203,90,87"),
+            ("Amarillo dorado", "255,193,38"),
+            ("Rosa fuerte / Fucsia neón", "255,0,143"),
+            ("Rosa claro / Salmón claro", "254,175,168")
         ]
-        
+                
         self.setup_ui()
         self.load_existing_palette()
     
@@ -243,15 +250,15 @@ class ColorCalibrationWidget(QWidget):
             json.dump(palette_data, f, indent=4)
         QMessageBox.information(self, "Guardado Exitoso", "La paleta ha sido guardada en 'assets/palette.json'.")
 
-
-# El resto de MainWindow y otras clases no necesita cambios importantes.
-# Solo asegúrate de que se integren bien.
-# El resto de tu código para MainWindow y CanvasCalibrationWidget es excelente. Lo mantendremos.
-
 class CanvasCalibrationWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent
+        # AÑADE ESTAS LÍNEAS
+        self.corners = {}
+        self.corner_order = ["Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"]
+        self.current_corner_index = 0
+        self.mouse_listener = None
         self.setup_ui()
     
     def setup_ui(self):
@@ -304,10 +311,39 @@ class CanvasCalibrationWidget(QWidget):
         coords_layout.addWidget(self.height_spin, 1, 3)
         
         layout.addWidget(coords_group)
-        
+                
+        padding_group = QGroupBox("Ajuste de Tamaño (Padding)")
+        padding_layout = QHBoxLayout(padding_group)
+        padding_layout.addWidget(QLabel("Usar % del área:"))
+        self.padding_spin = QSpinBox()
+        self.padding_spin.setRange(50, 100) # De 50% a 100%
+        self.padding_spin.setValue(95) # 95% por defecto
+        self.padding_spin.setSuffix("%")
+        padding_layout.addWidget(self.padding_spin)
+        layout.addWidget(padding_group)
+
+        # --- AÑADE ESTE BLOQUE ENTERO ---
+
+        # Grupo para la Alineación
+        align_group = QGroupBox("Alineación del Dibujo")
+        align_layout = QHBoxLayout(align_group)
+        self.align_combo = QComboBox()
+        self.align_combo.addItems([
+            "Centro", "Arriba-Centro", "Abajo-Centro",
+            "Centro-Izquierda", "Centro-Derecha", "Arriba-Izquierda",
+            "Arriba-Derecha", "Abajo-Izquierda", "Abajo-Derecha"
+        ])
+        align_layout.addWidget(self.align_combo)
+        layout.addWidget(align_group)
+
         # Botones
         button_layout = QHBoxLayout()
-        
+                
+        # AÑADE ESTE BOTÓN
+        auto_calibrate_btn = QPushButton("✨ Calibrar con 4 Esquinas")
+        auto_calibrate_btn.clicked.connect(self.start_corner_calibration)
+        button_layout.addWidget(auto_calibrate_btn)
+
         test_btn = QPushButton("🎯 Probar Área")
         test_btn.clicked.connect(self.test_canvas_area)
         button_layout.addWidget(test_btn)
@@ -371,18 +407,273 @@ class CanvasCalibrationWidget(QWidget):
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error guardando configuración: {str(e)}")
-    
+            
+    # REEMPLAZA TU FUNCIÓN get_canvas_region CON ESTA VERSIÓN MEJORADA
     def get_canvas_region(self):
-        """Retorna la región del canvas configurada"""
-        try:
-            if os.path.exists('assets/canvas_config.json'):
-                with open('assets/canvas_config.json', 'r') as f:
-                    return json.load(f)['canvas_region']
-        except:
-            pass # Usar valores por defecto si no hay config
-        return (self.x_spin.value(), self.y_spin.value(), 
-                self.width_spin.value(), self.height_spin.value())
+        """Retorna la región del canvas, aplicando padding y alineación."""
+        base_x, base_y = self.x_spin.value(), self.y_spin.value()
+        base_w, base_h = self.width_spin.value(), self.height_spin.value()
 
+        padding_percent = self.padding_spin.value() / 100.0
+        alignment = self.align_combo.currentText()
+
+        new_w = int(base_w * padding_percent)
+        new_h = int(base_h * padding_percent)
+
+        # Calcular origen X según alineación
+        if "Izquierda" in alignment:
+            new_x = base_x
+        elif "Derecha" in alignment:
+            new_x = base_x + (base_w - new_w)
+        else: # Centro
+            new_x = base_x + (base_w - new_w) // 2
+
+        # Calcular origen Y según alineación
+        if "Arriba" in alignment:
+            new_y = base_y
+        elif "Abajo" in alignment:
+            new_y = base_y + (base_h - new_h)
+        else: # Centro
+            new_y = base_y + (base_h - new_h) // 2
+
+        return (new_x, new_y, new_w, new_h)
+
+    def start_corner_calibration(self):
+        self.corners = {}
+        self.current_corner_index = 0
+        self.prompt_for_next_corner()
+
+    def prompt_for_next_corner(self):
+        if self.current_corner_index < len(self.corner_order):
+            corner_name = self.corner_order[self.current_corner_index]
+            self.status_label.setText(f"➡️ Haz clic en la esquina: {corner_name}")
+
+            self.mouse_listener = MouseClickListener()
+            self.mouse_listener.mouse_clicked.connect(self.on_corner_clicked)
+            self.mouse_listener.start()
+        else:
+            self.calculate_and_set_canvas()
+
+    def on_corner_clicked(self, x, y):
+        if self.mouse_listener:
+            self.mouse_listener.stop()
+            self.mouse_listener = None
+
+        corner_name = self.corner_order[self.current_corner_index]
+        self.corners[corner_name] = (x, y)
+        print(f"Esquina {corner_name} registrada en: ({x}, {y})")
+
+        self.current_corner_index += 1
+        self.prompt_for_next_corner()
+
+    def calculate_and_set_canvas(self):
+        try:
+            all_x = [pos[0] for pos in self.corners.values()]
+            all_y = [pos[1] for pos in self.corners.values()]
+
+            x = min(all_x)
+            y = min(all_y)
+            w = max(all_x) - x
+            h = max(all_y) - y
+
+            self.x_spin.setValue(x)
+            self.y_spin.setValue(y)
+            self.width_spin.setValue(w)
+            self.height_spin.setValue(h)
+
+            self.status_label.setText("✅ ¡Área de dibujo calculada y actualizada!")
+        except Exception as e:
+            self.status_label.setText(f"Error calculando el área: {e}")
+
+class ExactColorCalibrationWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.coords = {}
+        self.current_calibration_item = None
+        self.mouse_listener = None
+        
+        self.items_to_calibrate = {
+            "palette_button": "Botón de Selector de Color (el rectángulo blanco)",
+            "r_field": "Campo de texto para ROJO (R)",
+            "g_field": "Campo de texto para VERDE (G)",
+            "b_field": "Campo de texto para AZUL (B)"
+        }
+        
+        self.setup_ui()
+        self.load_existing_config()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        title = QLabel("Calibración del Selector de Color Exacto")
+        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        instructions = QLabel(
+            "Este modo permite al bot usar CUALQUIER color, pero es más lento.\n"
+            "Calibra la posición del selector de color de Gartic Phone y sus campos R, G, B."
+        )
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        self.status_label = QLabel("Estado: Listo.")
+        layout.addWidget(self.status_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        grid_layout = QGridLayout()
+        self.coord_labels = {}
+        
+        i = 0
+        for key, desc in self.items_to_calibrate.items():
+            grid_layout.addWidget(QLabel(desc), i, 0)
+            
+            self.coord_labels[key] = QLabel("No calibrado")
+            self.coord_labels[key].setStyleSheet("color: red;")
+            grid_layout.addWidget(self.coord_labels[key], i, 1)
+
+            btn = QPushButton(f"🎯 Calibrar {key.replace('_', ' ').title()}")
+            btn.clicked.connect(lambda _, k=key: self.start_item_calibration(k))
+            grid_layout.addWidget(btn, i, 2)
+            i += 1
+            
+        layout.addLayout(grid_layout)
+
+        save_btn = QPushButton("💾 Guardar Configuración de Color Exacto")
+        save_btn.clicked.connect(self.save_config)
+        layout.addWidget(save_btn)
+
+    def start_item_calibration(self, item_key):
+        self.current_calibration_item = item_key
+        self.status_label.setText(f"➡️ Esperando clic para: {self.items_to_calibrate[item_key]}")
+        QMessageBox.information(self, "Esperando Clic", f"Por favor, haz clic en:\n\n{self.items_to_calibrate[item_key]}")
+        
+        self.mouse_listener = MouseClickListener()
+        self.mouse_listener.mouse_clicked.connect(self.on_item_clicked)
+        self.mouse_listener.start()
+
+    def on_item_clicked(self, x, y):
+        if self.current_calibration_item:
+            self.coords[self.current_calibration_item] = (x, y)
+            self.update_display()
+            self.status_label.setText(f"✅ Calibrado: {self.items_to_calibrate[self.current_calibration_item]}")
+            self.mouse_listener.stop()
+            self.mouse_listener = None
+            self.current_calibration_item = None
+
+    def update_display(self):
+        for key, label in self.coord_labels.items():
+            if key in self.coords:
+                label.setText(str(self.coords[key]))
+                label.setStyleSheet("color: green; font-weight: bold;")
+
+    def load_existing_config(self):
+        if os.path.exists('assets/exact_color_config.json'):
+            with open('assets/exact_color_config.json', 'r') as f:
+                self.coords = json.load(f)
+            self.update_display()
+
+    def save_config(self):
+        if len(self.coords) < len(self.items_to_calibrate):
+            QMessageBox.warning(self, "Incompleto", "Debes calibrar todos los elementos antes de guardar.")
+            return
+        os.makedirs('assets', exist_ok=True)
+        with open('assets/exact_color_config.json', 'w') as f:
+            json.dump(self.coords, f, indent=4)
+        QMessageBox.information(self, "Guardado", "La configuración del color exacto ha sido guardada.")
+
+    def get_coords(self):
+        return self.coords
+
+# AÑADE ESTA NUEVA CLASE COMPLETA
+class BrushCalibrationWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_window = parent
+        self.coords = {}
+        self.current_calibration_item = None
+        self.mouse_listener = None
+
+        self.brushes_to_calibrate = {
+            "brush_1": "Pincel 1 (23px, el más grande)",
+            "brush_2": "Pincel 2 (18px)",
+            "brush_3": "Pincel 3 (14px)",
+            "brush_4": "Pincel 4 (9px)",
+            "brush_5": "Pincel 5 (3px, el más pequeño)"
+        }
+
+        self.setup_ui()
+        self.load_existing_config()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        title = QLabel("Calibración de Pinceles")
+        title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
+        layout.addWidget(title, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        instructions = QLabel("Calibra la posición de cada tamaño de pincel para que el 'Modo Inteligente' pueda seleccionarlos automáticamente.")
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        self.status_label = QLabel("Estado: Listo.")
+        layout.addWidget(self.status_label, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        grid_layout = QGridLayout()
+        self.coord_labels = {}
+
+        i = 0
+        for key, desc in self.brushes_to_calibrate.items():
+            grid_layout.addWidget(QLabel(desc), i, 0)
+
+            self.coord_labels[key] = QLabel("No calibrado")
+            self.coord_labels[key].setStyleSheet("color: red;")
+            grid_layout.addWidget(self.coord_labels[key], i, 1)
+
+            btn = QPushButton(f"🎯 Calibrar Pincel {i+1}")
+            btn.clicked.connect(lambda _, k=key: self.start_item_calibration(k))
+            grid_layout.addWidget(btn, i, 2)
+            i += 1
+
+        layout.addLayout(grid_layout)
+
+        save_btn = QPushButton("💾 Guardar Configuración de Pinceles")
+        save_btn.clicked.connect(self.save_config)
+        layout.addWidget(save_btn)
+
+    def start_item_calibration(self, item_key):
+        self.current_calibration_item = item_key
+        self.status_label.setText(f"➡️ Esperando clic para: {self.brushes_to_calibrate[item_key]}")
+
+        self.mouse_listener = MouseClickListener()
+        self.mouse_listener.mouse_clicked.connect(self.on_item_clicked)
+        self.mouse_listener.start()
+
+    def on_item_clicked(self, x, y):
+        if self.current_calibration_item:
+            self.coords[self.current_calibration_item] = (x, y)
+            self.update_display()
+            self.status_label.setText(f"✅ Calibrado: {self.brushes_to_calibrate[self.current_calibration_item]}")
+            self.mouse_listener.stop()
+            self.mouse_listener = None
+
+    def update_display(self):
+        for key, label in self.coord_labels.items():
+            if key in self.coords:
+                label.setText(str(self.coords[key]))
+                label.setStyleSheet("color: green; font-weight: bold;")
+
+    def load_existing_config(self):
+        if os.path.exists('assets/brushes_config.json'):
+            with open('assets/brushes_config.json', 'r') as f:
+                self.coords = json.load(f)
+            self.update_display()
+
+    def save_config(self):
+        os.makedirs('assets', exist_ok=True)
+        with open('assets/brushes_config.json', 'w') as f:
+            json.dump(self.coords, f, indent=4)
+        QMessageBox.information(self, "Guardado", "La configuración de los pinceles ha sido guardada.")
+
+    def get_coords(self):
+        return self.coords
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -407,9 +698,14 @@ class MainWindow(QMainWindow):
         self.drawing_tab = self.create_drawing_tab()
         self.color_calibration_tab = ColorCalibrationWidget(self)
         self.canvas_calibration_tab = CanvasCalibrationWidget(self)
+        self.exact_color_calibration_tab = ExactColorCalibrationWidget(self) # <-- ¡AÑADE ESTA LÍNEA!
+        self.brush_calibration_tab = BrushCalibrationWidget(self) # <-- AÑADE ESTA LÍNEA
+
         
         self.tabs.addTab(self.drawing_tab, "🎨 Dibujar")
         self.tabs.addTab(self.color_calibration_tab, "🎯 Calibrar Colores")
+        self.tabs.addTab(self.exact_color_calibration_tab, "✨ Calibrar Color Exacto") 
+        self.tabs.addTab(self.brush_calibration_tab, "🖌️ Calibrar Pinceles") # <-- AÑADE ESTA LÍNEA
         self.tabs.addTab(self.canvas_calibration_tab, "📐 Configurar Canvas")
         
         layout.addWidget(self.tabs)
@@ -427,7 +723,20 @@ class MainWindow(QMainWindow):
         self.image_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_preview.setStyleSheet("border: 2px dashed #ccc; background-color: #f9f9f9;")
         layout.addWidget(self.image_preview)
-        
+                
+        # AÑADE ESTE BLOQUE
+        mode_group = QGroupBox("Modo de Dibujo")
+        mode_layout = QHBoxLayout(mode_group)
+        self.palette_mode_radio = QRadioButton("Rápido (Paleta Limitada)")
+        self.palette_mode_radio.setChecked(True)
+        self.exact_mode_radio = QRadioButton("Preciso (Color Exacto - Lento)")
+        self.smart_mode_radio = QRadioButton("Inteligente (Pincel Automático)") # <-- AÑADE ESTA LÍNEA
+        mode_layout.addWidget(self.palette_mode_radio)
+        mode_layout.addWidget(self.exact_mode_radio)
+        mode_layout.addWidget(self.smart_mode_radio) # <-- AÑADE ESTA LÍNEA
+        layout.addWidget(mode_group)
+
+
         button_layout = QHBoxLayout()
         self.load_button = QPushButton("📁 Cargar Imagen")
         self.load_button.clicked.connect(self.load_image)
@@ -486,9 +795,36 @@ class MainWindow(QMainWindow):
             return
         
         try:
+           #self.bot = DrawingBot(self.image_path, canvas_region) esta se borra?
             canvas_region = self.canvas_calibration_tab.get_canvas_region()
-            self.bot = DrawingBot(self.image_path, canvas_region)
-            
+
+            # REEMPLAZA EL BLOQUE ANTERIOR CON ESTE
+            if self.smart_mode_radio.isChecked():
+                mode = 'smart'
+                # Revisar que AMBAS calibraciones estén hechas
+                if not os.path.exists('assets/brushes_config.json') or not os.path.exists('assets/exact_color_config.json'):
+                    QMessageBox.warning(self, "Falta Calibración", "El Modo Inteligente requiere que calibres tanto los 'Pinceles' como el 'Color Exacto'.")
+                    return
+
+                # Cargar AMBAS configuraciones
+                brush_coords = self.brush_calibration_tab.get_coords()
+                exact_color_coords = self.exact_color_calibration_tab.get_coords()
+
+                # Pasar AMBAS configuraciones al bot
+                self.bot = DrawingBot(self.image_path, canvas_region, mode=mode, brush_coords=brush_coords, exact_color_coords=exact_color_coords)
+                
+            elif self.exact_mode_radio.isChecked():
+                mode = 'exact'
+                if not os.path.exists('assets/exact_color_config.json'):
+                    QMessageBox.warning(self, "Falta Calibración", "Ve a 'Calibrar Color Exacto' y calibra las coordenadas primero.")
+                    return
+                exact_color_coords = self.exact_color_calibration_tab.get_coords()
+                self.bot = DrawingBot(self.image_path, canvas_region, mode=mode, exact_color_coords=exact_color_coords)
+
+            else: # Modo Paleta
+                mode = 'palette'
+                self.bot = DrawingBot(self.image_path, canvas_region, mode=mode)
+
             self.drawing_thread = QThread()
             self.worker = Worker(self.bot)
             self.worker.moveToThread(self.drawing_thread)
@@ -536,6 +872,7 @@ class MainWindow(QMainWindow):
         self.load_button.setEnabled(not is_drawing)
         self.tabs.setTabEnabled(1, not is_drawing) # Bloquear calibración mientras dibuja
         self.tabs.setTabEnabled(2, not is_drawing)
+        self.tabs.setTabEnabled(3, not is_drawing) # <-- AÑADE ESTA LÍNEA (ajusta el número si el orden cambió)
         if is_drawing:
             self.status_label.setText("Estado: 🎨 Dibujando...")
     
